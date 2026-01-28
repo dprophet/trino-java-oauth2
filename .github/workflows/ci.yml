@@ -41,4 +41,4 @@ jobs:
     # This will execute 'docker-compose up', run tests, and 'down' 
     # (assuming that is what your Makefile does)
     - name: Run Container Tests
-      run: make container-test
+      run: make e2e
