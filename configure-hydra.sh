@@ -18,10 +18,48 @@ set -e
 
 # Ensure compiled
 if [ ! -d "target/test-classes" ]; then
-    echo "Test classes not found. Compiling..."
-    mvn test-compile -s artifactory_settings.xml
+    echo "Error: Test classes not found. Run mvn test-compile first."
+    exit 1
 fi
 
-# Run the configuration tool
-java -cp "target/test-classes:target/classes:$(mvn dependency:build-classpath -s artifactory_settings.xml -q -Dmdep.outputFile=/dev/stdout)" \
-    io.trino.oauth2.e2e.ConfigureHydra
+# Determine which settings file to use
+if [ -f "settings.xml" ]; then
+    MVN_SETTINGS="-s settings.xml"
+elif [ -f "artifactory_settings.xml" ]; then
+    MVN_SETTINGS="-s artifactory_settings.xml"
+else
+    MVN_SETTINGS=""
+fi
+
+# Build classpath - try multiple methods in order of preference
+if [ -f "classpath.txt" ] && [ -s "classpath.txt" ]; then
+    # Method 1: Use pre-generated classpath.txt (from Docker build)
+    DEP_CLASSPATH=$(cat classpath.txt)
+    CLASSPATH="target/test-classes:target/classes:$DEP_CLASSPATH"
+elif command -v mvn >/dev/null 2>&1; then
+    # Method 2: Use Maven to build classpath (most reliable)
+    echo "Building classpath using Maven..."
+    DEP_CLASSPATH=$(mvn $MVN_SETTINGS dependency:build-classpath -q -Dmdep.outputFile=/dev/stdout 2>/dev/null || echo "")
+    if [ -z "$DEP_CLASSPATH" ]; then
+        echo "Warning: Maven classpath generation failed, trying alternative method..."
+        # Method 3: Find all jars in local Maven repository
+        MAVEN_REPO="${HOME}/.m2/repository"
+        if [ -d "$MAVEN_REPO" ]; then
+            DEP_CLASSPATH=$(find "$MAVEN_REPO" -name "*.jar" -type f 2>/dev/null | tr '\n' ':')
+        fi
+    fi
+    CLASSPATH="target/test-classes:target/classes:$DEP_CLASSPATH"
+else
+    # Method 4: Final fallback - find jars in Maven repository
+    echo "Building classpath from local Maven repository..."
+    MAVEN_REPO="${HOME}/.m2/repository"
+    if [ ! -d "$MAVEN_REPO" ]; then
+        # Try Docker path as last resort
+        MAVEN_REPO="/root/.m2/repository"
+    fi
+    DEP_CLASSPATH=$(find "$MAVEN_REPO" -name "*.jar" -type f 2>/dev/null | tr '\n' ':')
+    CLASSPATH="target/test-classes:target/classes:$DEP_CLASSPATH"
+fi
+
+# Run the configuration tool with all dependencies on classpath
+java -cp "$CLASSPATH" io.trino.oauth2.e2e.ConfigureHydra

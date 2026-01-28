@@ -136,3 +136,4 @@ logs/
 *.bak
 *.backup
 *~
+.docker-maven-settings.xml

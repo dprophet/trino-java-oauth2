@@ -12,11 +12,35 @@
 
 # Makefile for Trino OAuth2 Java Library
 
-# Maven settings file (optional - use custom settings.xml if it exists)
-ifneq ("$(wildcard settings.xml)","")
+# Maven settings file detection
+# VPN ON: Use artifactory_settings.xml if it exists
+# VPN OFF: Use settings.xml if it exists, otherwise use Maven defaults
+ifneq ("$(wildcard artifactory_settings.xml)","")
+    MVN_SETTINGS := -s artifactory_settings.xml
+else ifneq ("$(wildcard settings.xml)","")
     MVN_SETTINGS := -s settings.xml
 else
     MVN_SETTINGS :=
+endif
+
+# Docker proxy configuration
+# Set USE_DOCKER_PROXY=1 to enable proxy for Docker builds
+# Set USE_DOCKER_PROXY=0 to disable proxy (useful when proxy blocks docker.io)
+USE_DOCKER_PROXY ?= 0
+
+ifeq ($(USE_DOCKER_PROXY),1)
+    DOCKER_BUILD_ARGS := --build-arg HTTP_PROXY=$(HTTP_PROXY) \
+                         --build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
+                         --build-arg NO_PROXY=localhost,127.0.0.1,hydra,consent
+    export HTTP_PROXY
+    export HTTPS_PROXY
+    export NO_PROXY := localhost,127.0.0.1,hydra,consent
+else
+    DOCKER_BUILD_ARGS :=
+    unexport HTTP_PROXY
+    unexport HTTPS_PROXY
+    unexport http_proxy
+    unexport https_proxy
 endif
 
 # Default target
@@ -103,17 +127,38 @@ test-compile:
 
 .PHONY: pull
 pull:
-	docker pull oryd/hydra:v2.2.0
-	docker pull oryd/hydra-login-consent-node:v2.2.0
+	@if [ "$(USE_DOCKER_PROXY)" = "1" ]; then \
+		echo "Pulling images with proxy enabled..."; \
+		docker pull oryd/hydra:v2.2.0; \
+		docker pull oryd/hydra-login-consent-node:v2.2.0; \
+	else \
+		echo "Pulling images without proxy (USE_DOCKER_PROXY=0)..."; \
+		env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+		docker pull oryd/hydra:v2.2.0; \
+		env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+		docker pull oryd/hydra-login-consent-node:v2.2.0; \
+	fi
 
 .PHONY: start-hydra
 start-hydra:
-	@if [ -f .env.local ]; then \
-		echo "Loading environment from .env.local before starting Hydra..."; \
-		export $$(cat .env.local | grep -v '^#' | xargs) && \
-		docker-compose -f tests/docker-compose.yml up -d; \
+	@if [ "$(USE_DOCKER_PROXY)" = "0" ]; then \
+		if [ -f .env.local ]; then \
+			echo "Loading environment from .env.local before starting Hydra..."; \
+			export $$(cat .env.local | grep -v '^#' | xargs) && \
+			env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+			docker-compose -f tests/docker-compose.yml up -d; \
+		else \
+			env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
+			docker-compose -f tests/docker-compose.yml up -d; \
+		fi; \
 	else \
-		docker-compose -f tests/docker-compose.yml up -d; \
+		if [ -f .env.local ]; then \
+			echo "Loading environment from .env.local before starting Hydra..."; \
+			export $$(cat .env.local | grep -v '^#' | xargs) && \
+			docker-compose -f tests/docker-compose.yml up -d; \
+		else \
+			docker-compose -f tests/docker-compose.yml up -d; \
+		fi; \
 	fi
 
 .PHONY: stop-hydra
@@ -161,6 +206,61 @@ e2e: restart-hydra
 	$(MAKE) test-e2e
 
 #
+# Docker Daemon Proxy Management
+#
+
+.PHONY: docker-proxy-enable
+docker-proxy-enable:
+	@echo "Enabling Docker daemon proxy (requires sudo)..."
+	sudo ./configure-docker-proxy.sh enable
+
+.PHONY: docker-proxy-disable
+docker-proxy-disable:
+	@echo "Disabling Docker daemon proxy (requires sudo)..."
+	sudo ./configure-docker-proxy.sh disable
+
+.PHONY: docker-proxy-status
+docker-proxy-status:
+	@./configure-docker-proxy.sh status
+
+#
+# Docker-based Testing
+#
+
+.PHONY: build-test
+build-test:
+	@echo "Preparing Docker build context..."
+	@# VPN detection: If artifactory_settings.xml exists, use it (VPN ON)
+	@if [ -f artifactory_settings.xml ]; then \
+		echo "VPN ON: Using artifactory_settings.xml for Docker build"; \
+		cp artifactory_settings.xml .docker-maven-settings.xml; \
+	else \
+		echo "VPN OFF: Using Maven Central for Docker build"; \
+		echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"></settings>' > .docker-maven-settings.xml; \
+	fi
+	@echo "Building test Docker container..."
+	docker compose -f tests/docker-compose.yml build \
+		--build-arg HTTP_PROXY=$(HTTP_PROXY) \
+		--build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
+		--build-arg NO_PROXY=localhost,127.0.0.1,hydra,consent,*.bloomberg.com,.bloomberg.com,artprod.dev.bloomberg.com \
+		test
+	@rm -f .docker-maven-settings.xml
+
+.PHONY: test-docker
+test-docker:
+	@echo "Running tests in Docker containers..."
+	@echo "Note: Containers will inherit proxy settings from environment"
+	docker compose -f tests/docker-compose.yml up --abort-on-container-exit --exit-code-from test
+
+.PHONY: test-docker-rebuild
+test-docker-rebuild: build-test test-docker
+
+.PHONY: clean-docker
+clean-docker:
+	@echo "Cleaning up Docker containers and images..."
+	docker compose -f tests/docker-compose.yml down -v --rmi local
+
+#
 # Development Targets
 #
 
@@ -199,6 +299,14 @@ help:
 	@echo "IMPORTANT: E2E tests require .env.local file with localhost URLs"
 	@echo "  Run: cp .env.local.template .env.local"
 	@echo ""
+	@echo "Docker Daemon Proxy Management:"
+	@echo "  make docker-proxy-enable  - Configure Docker daemon to use proxy (requires sudo)"
+	@echo "  make docker-proxy-disable - Remove Docker daemon proxy config (requires sudo)"
+	@echo "  make docker-proxy-status  - Show current Docker daemon proxy status"
+	@echo ""
+	@echo "  NOTE: Your network requires the proxy to access docker.io"
+	@echo "  Run 'make docker-proxy-enable' once before Docker operations"
+	@echo ""
 	@echo "Build Targets:"
 	@echo "  make build          - Clean and build the project (default)"
 	@echo "  make compile        - Compile source code"
@@ -221,6 +329,12 @@ help:
 	@echo ""
 	@echo "E2E Test Flow:"
 	@echo "  make e2e            - Restart Hydra + configure + run E2E tests"
+	@echo ""
+	@echo "Docker-based Testing:"
+	@echo "  make build-test     - Build test Docker container"
+	@echo "  make test-docker    - Run all tests in Docker (no .env.local needed)"
+	@echo "  make test-docker-rebuild - Rebuild and run tests in Docker"
+	@echo "  make clean-docker   - Clean up Docker containers and images"
 	@echo ""
 	@echo "Development:"
 	@echo "  make verify         - Run Maven verify phase"

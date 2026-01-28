@@ -1,5 +1,3 @@
-version: '3.7'
-
 networks:
   oauth-test-network:
     driver: bridge
@@ -45,18 +43,18 @@ services:
     build:
       context: ..
       dockerfile: tests/Dockerfile
-    image: oauth-tests:latest
-    container_name: oauth-tests
+    image: trino-oauth2-tests:latest
+    container_name: trino-oauth2-tests
     networks:
       - oauth-test-network
     depends_on:
       - hydra
       - consent
     environment:
-      - HYDRA_ADMIN_URL=${HYDRA_ADMIN_URL:-http://hydra:4445}
-      - HYDRA_PUBLIC_URL=${HYDRA_PUBLIC_URL:-http://hydra:4444}
-      - PYTHONUNBUFFERED=1
-      - KEYRING_CRYPTFILE_PASSWORD=password123
-    volumes:
-      - .:/app/tests
-    command: bash -c "python3 tests/configure_hydra.py && pytest -v -s tests/ --junitxml=/app/tests/tests_results.xml"
+      - HYDRA_ADMIN_URL=http://hydra:4445
+      - HYDRA_PUBLIC_URL=http://hydra:4444
+      - CONSENT_URL=http://consent:3000
+      - HTTP_PROXY=${HTTP_PROXY:-}
+      - HTTPS_PROXY=${HTTPS_PROXY:-}
+      - NO_PROXY=localhost,127.0.0.1,hydra,consent,*.bloomberg.com,.bloomberg.com,artprod.dev.bloomberg.com
+    command: bash -c "sleep 5 && chmod +x /app/configure-hydra.sh && /app/configure-hydra.sh && mvn test -Dgroups=e2e"
