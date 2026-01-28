@@ -104,7 +104,13 @@ pull:
 
 .PHONY: start-hydra
 start-hydra:
-	docker-compose -f tests/docker-compose.yml up -d
+	@if [ -f .env.local ]; then \
+		echo "Loading environment from .env.local before starting Hydra..."; \
+		export $$(cat .env.local | grep -v '^#' | xargs) && \
+		docker-compose -f tests/docker-compose.yml up -d; \
+	else \
+		docker-compose -f tests/docker-compose.yml up -d; \
+	fi
 
 .PHONY: stop-hydra
 stop-hydra:
