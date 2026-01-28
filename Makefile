@@ -12,8 +12,12 @@
 
 # Makefile for Trino OAuth2 Java Library
 
-# Maven settings file
-MVN_SETTINGS := -s artifactory_settings.xml
+# Maven settings file (optional - use custom settings.xml if it exists)
+ifneq ("$(wildcard settings.xml)","")
+    MVN_SETTINGS := -s settings.xml
+else
+    MVN_SETTINGS :=
+endif
 
 # Default target
 .PHONY: default
