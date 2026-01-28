@@ -23,6 +23,7 @@ import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Automates the Ory Hydra authentication flows by acting as the Administrator.
@@ -36,11 +37,40 @@ public class HydraAutoConsent {
     private final String userEmail;
     private final OkHttpClient client;
 
+    // Simple in-memory cookie jar to preserve cookies across requests
+    private static class SimpleCookieJar implements CookieJar {
+        private final Map<String, List<Cookie>> cookieStore = new ConcurrentHashMap<>();
+
+        @Override
+        public void saveFromResponse(HttpUrl url, List<Cookie> cookies) {
+            cookieStore.put(url.host(), cookies);
+        }
+
+        @Override
+        public List<Cookie> loadForRequest(HttpUrl url) {
+            List<Cookie> cookies = cookieStore.get(url.host());
+            return cookies != null ? cookies : new ArrayList<>();
+        }
+    }
+
     public HydraAutoConsent(String adminUrl, String userEmail) {
         this.adminUrl = adminUrl;
         this.userEmail = userEmail;
+        // Use a non-redirecting client with cookie jar for most requests
+        SimpleCookieJar cookieJar = new SimpleCookieJar();
         this.client = new OkHttpClient.Builder()
                 .followRedirects(false)
+                .cookieJar(cookieJar)
+                .build();
+    }
+
+    // Create a client that follows redirects (for final completion steps)
+    // Shares the same cookie jar as the main client
+    private OkHttpClient getRedirectingClient() {
+        CookieJar cookieJar = client.cookieJar();
+        return new OkHttpClient.Builder()
+                .followRedirects(true)
+                .cookieJar(cookieJar)
                 .build();
     }
 
@@ -76,10 +106,11 @@ public class HydraAutoConsent {
                 throw new IllegalArgumentException("Missing '" + paramName + "' in URL: " + url);
             }
 
+            // URI.getQuery() already returns decoded values, so we don't need to decode again
             for (String param : query.split("&")) {
-                String[] pair = param.split("=");
+                String[] pair = param.split("=", 2);  // Limit split to 2 parts in case value contains '='
                 if (pair.length == 2 && pair[0].equals(paramName)) {
-                    return URLDecoder.decode(pair[1], StandardCharsets.UTF_8);
+                    return pair[1];
                 }
             }
             throw new IllegalArgumentException("Missing '" + paramName + "' in URL: " + url);
@@ -262,9 +293,12 @@ public class HydraAutoConsent {
                 String deviceChallenge = getQueryParam(deviceUiUrlFull, "device_challenge");
 
                 String verifierRedirectUrl = acceptDeviceRequest(deviceChallenge, userCode);
+
+                // Perform Login and Consent dance
                 String urlWithVerifier = performLoginConsentDance(verifierRedirectUrl);
 
-                // Finalize
+                // Finalize - the Python code uses allow_redirects=True, but we can't follow
+                // redirects to Docker internal hostnames. Just make the request without following.
                 Request finalRequest = new Request.Builder().url(urlWithVerifier).get().build();
                 client.newCall(finalRequest).execute().close();
             }
