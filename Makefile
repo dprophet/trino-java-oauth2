@@ -19,7 +19,8 @@ ifdef HTTP_PROXY
     ifeq ("$(wildcard artifactory_settings.xml)","")
         $(error HTTP_PROXY is set but artifactory_settings.xml not found. When using a proxy, you must have artifactory_settings.xml configured for your corporate network.)
     endif
-    MVN_SETTINGS := -s artifactory_settings.xml
+    # Use temp settings file with HTTP blocker override if it exists, otherwise use original
+    MVN_SETTINGS := -s $(if $(wildcard .local-maven-settings.xml),.local-maven-settings.xml,artifactory_settings.xml)
 else
     MVN_SETTINGS :=
 endif
@@ -128,9 +129,9 @@ start-hydra:
 	@if [ -f .env.local ]; then \
 		echo "Loading environment from .env.local before starting Hydra..."; \
 		export $$(cat .env.local | grep -v '^#' | xargs) && \
-		docker-compose -f tests/docker-compose.yml up -d; \
+		docker-compose -f tests/docker-compose.yml up -d hydra consent; \
 	else \
-		docker-compose -f tests/docker-compose.yml up -d; \
+		docker-compose -f tests/docker-compose.yml up -d hydra consent; \
 	fi
 
 .PHONY: stop-hydra
@@ -152,6 +153,11 @@ configure-hydra:
 		echo "Compiling test classes first..."; \
 		mvn $(MVN_SETTINGS) test-compile; \
 	fi
+	@# Create temporary settings file with HTTP blocker override if using proxy
+	@if [ -n "$$HTTP_PROXY" ] && [ -f artifactory_settings.xml ]; then \
+		cp artifactory_settings.xml .local-maven-settings.xml; \
+		sed -i.bak '/<\/proxies>/a\  <mirrors>\n    <mirror>\n      <id>maven-default-http-blocker</id>\n      <mirrorOf>external:dummy:*</mirrorOf>\n      <name>Disable HTTP blocking</name>\n      <url>http://0.0.0.0/</url>\n      <blocked>false</blocked>\n    </mirror>\n  </mirrors>' .local-maven-settings.xml && rm -f .local-maven-settings.xml.bak; \
+	fi
 	@if [ -f .env.local ]; then \
 		echo "Loading environment from .env.local..."; \
 		export $$(cat .env.local | grep -v '^#' | xargs) && \
@@ -172,6 +178,7 @@ hydra-logs:
 e2e: restart-hydra
 	@echo "Running E2E tests..."
 	$(MAKE) test-e2e
+	@rm -f .local-maven-settings.xml
 
 #
 # Docker Daemon Proxy Management
@@ -199,18 +206,20 @@ docker-proxy-status:
 build-test:
 	@echo "Preparing Docker build context..."
 	@# Proxy detection: If HTTP_PROXY is set, artifactory_settings.xml MUST exist
-ifdef HTTP_PROXY
-	@if [ ! -f artifactory_settings.xml ]; then \
-		echo "ERROR: HTTP_PROXY is set but artifactory_settings.xml not found!"; \
-		echo "When using a proxy, you must have artifactory_settings.xml configured for your corporate network."; \
-		exit 1; \
+	@if [ -n "$$HTTP_PROXY" ]; then \
+		if [ ! -f artifactory_settings.xml ]; then \
+			echo "ERROR: HTTP_PROXY is set but artifactory_settings.xml not found!"; \
+			echo "When using a proxy, you must have artifactory_settings.xml configured for your corporate network."; \
+			exit 1; \
+		fi; \
+		echo "Proxy detected: Using artifactory_settings.xml for Docker build"; \
+		cp artifactory_settings.xml .docker-maven-settings.xml; \
+		echo "Adding HTTP blocker override to temporary .docker-maven-settings.xml..."; \
+		sed -i.bak '/<\/proxies>/a\  <mirrors>\n    <mirror>\n      <id>maven-default-http-blocker</id>\n      <mirrorOf>external:dummy:*</mirrorOf>\n      <name>Disable HTTP blocking</name>\n      <url>http://0.0.0.0/</url>\n      <blocked>false</blocked>\n    </mirror>\n  </mirrors>' .docker-maven-settings.xml && rm -f .docker-maven-settings.xml.bak; \
+	else \
+		echo "No proxy: Using Maven Central for Docker build"; \
+		echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"></settings>' > .docker-maven-settings.xml; \
 	fi
-	@echo "Proxy detected: Using artifactory_settings.xml for Docker build"
-	@cp artifactory_settings.xml .docker-maven-settings.xml
-else
-	@echo "No proxy: Using Maven Central for Docker build"
-	@echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"></settings>' > .docker-maven-settings.xml
-endif
 	@echo "Building test Docker container..."
 	docker compose -f tests/docker-compose.yml build \
 		--build-arg HTTP_PROXY=$(HTTP_PROXY) \

@@ -54,7 +54,7 @@ COPY configure-hydra.sh /app/
 # This will download everything needed including test dependencies
 RUN if [ -f /app/settings.xml ]; then \
         echo "Using settings.xml for Maven"; \
-        mvn -s /app/settings.xml clean compile test-compile -B; \
+        mvn -s /app/settings.xml -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true clean compile test-compile -B; \
     else \
         echo "Using Maven Central (no settings file)"; \
         mvn clean compile test-compile -B; \
@@ -63,7 +63,7 @@ RUN if [ -f /app/settings.xml ]; then \
 # Download test plugin dependencies explicitly (surefire-junit-platform, etc.)
 # This ensures everything is available when tests run
 RUN if [ -f /app/settings.xml ]; then \
-        mvn -s /app/settings.xml test -DskipTests -B || true; \
+        mvn -s /app/settings.xml -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true test -DskipTests -B || true; \
     else \
         mvn test -DskipTests -B || true; \
     fi
@@ -79,4 +79,4 @@ RUN echo "Generating classpath for ConfigureHydra..." && \
 
 # Default command runs tests
 # Use shell form to support conditional settings file
-CMD if [ -f /app/settings.xml ]; then mvn -s /app/settings.xml test; else mvn test; fi
+CMD if [ -f /app/settings.xml ]; then mvn -s /app/settings.xml -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true test; else mvn test; fi

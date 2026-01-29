@@ -44,6 +44,10 @@ services:
     build:
       context: ..
       dockerfile: tests/Dockerfile
+      args:
+        - HTTP_PROXY=${HTTP_PROXY}
+        - HTTPS_PROXY=${HTTPS_PROXY}
+        - NO_PROXY=${NO_PROXY}
     image: trino-oauth2-tests:latest
     container_name: trino-oauth2-tests
     networks:
@@ -58,4 +62,4 @@ services:
       - HTTP_PROXY=${HTTP_PROXY:-}
       - HTTPS_PROXY=${HTTPS_PROXY:-}
       - NO_PROXY=${NO_PROXY:-localhost,127.0.0.1,hydra,consent}
-    command: bash -c "sleep 5 && chmod +x /app/configure-hydra.sh && /app/configure-hydra.sh && mvn test -Dgroups=e2e"
+    command: bash -c "sleep 5 && chmod +x /app/configure-hydra.sh && /app/configure-hydra.sh && if [ -f /app/settings.xml ]; then mvn -s /app/settings.xml -Dmaven.resolver.transport=wagon -Dmaven.wagon.http.ssl.insecure=true -Dmaven.wagon.http.ssl.allowall=true -Dmaven.wagon.http.ssl.ignore.validity.dates=true test -Dgroups=e2e; else mvn test -Dgroups=e2e; fi"
