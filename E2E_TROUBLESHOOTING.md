@@ -195,7 +195,7 @@ If you want to run tests inside Docker (where `hydra` hostname works):
 make container-test  # (if this target exists in your setup)
 
 # Or manually:
-docker-compose -f tests/docker-compose.yml run --rm test
+docker compose -f tests/docker-compose.yml run --rm test
 ```
 
 ## Clean Slate

@@ -129,14 +129,14 @@ start-hydra:
 	@if [ -f .env.local ]; then \
 		echo "Loading environment from .env.local before starting Hydra..."; \
 		export $$(cat .env.local | grep -v '^#' | xargs) && \
-		docker-compose -f tests/docker-compose.yml up -d hydra consent; \
+		docker compose -f tests/docker-compose.yml up -d hydra consent; \
 	else \
-		docker-compose -f tests/docker-compose.yml up -d hydra consent; \
+		docker compose -f tests/docker-compose.yml up -d hydra consent; \
 	fi
 
 .PHONY: stop-hydra
 stop-hydra:
-	docker-compose -f tests/docker-compose.yml down
+	docker compose -f tests/docker-compose.yml down
 
 .PHONY: restart-hydra
 restart-hydra:
