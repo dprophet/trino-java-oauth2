@@ -16,6 +16,7 @@ import io.trino.oauth2.utils.OAuthTokenStore;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Tag;
 
@@ -30,6 +31,15 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
 public abstract class HydraE2ETestBase {
 
     protected HydraAutoConsent hydraAutomator;
+
+    /**
+     * Enable test automation mode for all E2E tests.
+     * This allows the use of automationCallback in OAuth2 config builders.
+     */
+    @BeforeAll
+    static void enableTestAutomation() {
+        System.setProperty("io.trino.oauth2.test.automation", "true");
+    }
 
     @BeforeEach
     void checkHydraRunning() {

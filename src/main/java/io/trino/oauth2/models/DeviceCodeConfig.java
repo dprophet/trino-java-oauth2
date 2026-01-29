@@ -136,7 +136,23 @@ public class DeviceCodeConfig implements OAuth2Config {
             return this;
         }
 
+        /**
+         * Sets an automation callback for testing purposes only.
+         * This method is restricted to test environments and will throw an exception
+         * if called outside of test mode.
+         *
+         * @param automationCallback the callback to invoke during automated testing
+         * @return this builder
+         * @throws IllegalStateException if not running in test mode
+         */
         public Builder automationCallback(Consumer<String> automationCallback) {
+            if (!Boolean.getBoolean("io.trino.oauth2.test.automation")) {
+                throw new IllegalStateException(
+                    "automationCallback is only available in test mode. " +
+                    "This method is intended for automated testing only. " +
+                    "Set system property: -Dio.trino.oauth2.test.automation=true"
+                );
+            }
             this.automationCallback = automationCallback;
             return this;
         }

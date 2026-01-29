@@ -43,7 +43,7 @@ mvn clean install
 
 Check out `io.trino.oauth2.Example` in the repository for complete, runnable examples of all supported flows.
 
-### Basic Usage (Client Credentials)
+### Client Credentials
 
 ```java
 import io.trino.oauth2.OAuth2Client;
