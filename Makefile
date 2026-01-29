@@ -183,12 +183,8 @@ configure-hydra:
 	@if [ -f .env.local ]; then \
 		echo "Loading environment from .env.local..."; \
 		export $$(cat .env.local | grep -v '^#' | xargs) && \
-		unset HTTP_PROXY && \
-		unset http_proxy && \
 		./configure-hydra.sh; \
 	else \
-		unset HTTP_PROXY && \
-		unset http_proxy && \
 		./configure-hydra.sh; \
 	fi
 

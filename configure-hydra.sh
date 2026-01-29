@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash -xv
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -22,13 +22,29 @@ if [ ! -d "target/test-classes" ]; then
     exit 1
 fi
 
-# Determine which settings file to use
-if [ -f "settings.xml" ]; then
-    MVN_SETTINGS="-s settings.xml"
-elif [ -f "artifactory_settings.xml" ]; then
-    MVN_SETTINGS="-s artifactory_settings.xml"
+# Determine which settings file to use based on proxy environment
+# If HTTP_PROXY is set, use artifactory settings (corporate network)
+# Otherwise, use Maven Central directly
+if [ -n "$HTTP_PROXY" ] || [ -n "$http_proxy" ]; then
+    if [ -f "artifactory_settings.xml" ]; then
+        MVN_SETTINGS="-s artifactory_settings.xml"
+        echo "Proxy detected: Using artifactory_settings.xml"
+    elif [ -f "settings.xml" ]; then
+        MVN_SETTINGS="-s settings.xml"
+        echo "Proxy detected: Using settings.xml"
+    else
+        MVN_SETTINGS=""
+        echo "Warning: Proxy set but no settings file found"
+    fi
 else
-    MVN_SETTINGS=""
+    # No proxy - use Maven Central directly
+    if [ -f "settings.xml" ]; then
+        MVN_SETTINGS="-s settings.xml"
+        echo "No proxy: Using settings.xml"
+    else
+        MVN_SETTINGS=""
+        echo "No proxy: Using Maven Central directly"
+    fi
 fi
 
 # Build classpath - try multiple methods in order of preference
