@@ -12,35 +12,27 @@
 
 # Makefile for Trino OAuth2 Java Library
 
-# Maven settings file detection
-# VPN ON: Use artifactory_settings.xml if it exists
-# VPN OFF: Use settings.xml if it exists, otherwise use Maven defaults
-ifneq ("$(wildcard artifactory_settings.xml)","")
+# Maven settings file detection based on proxy environment
+# If HTTP_PROXY is set, artifactory_settings.xml MUST exist (corporate network)
+# Otherwise, use settings.xml if it exists, or Maven defaults
+ifdef HTTP_PROXY
+    ifeq ("$(wildcard artifactory_settings.xml)","")
+        $(error HTTP_PROXY is set but artifactory_settings.xml not found. When using a proxy, you must have artifactory_settings.xml configured for your corporate network.)
+    endif
     MVN_SETTINGS := -s artifactory_settings.xml
-else ifneq ("$(wildcard settings.xml)","")
-    MVN_SETTINGS := -s settings.xml
 else
     MVN_SETTINGS :=
 endif
 
-# Docker proxy configuration
-# Set USE_DOCKER_PROXY=1 to enable proxy for Docker builds
-# Set USE_DOCKER_PROXY=0 to disable proxy (useful when proxy blocks docker.io)
-USE_DOCKER_PROXY ?= 0
-
-ifeq ($(USE_DOCKER_PROXY),1)
+# Docker build args - pass proxy settings if they exist
+# Proxy environment variables (HTTP_PROXY, HTTPS_PROXY, NO_PROXY) are automatically
+# passed through to all commands. Scripts will honor them if set.
+ifdef HTTP_PROXY
     DOCKER_BUILD_ARGS := --build-arg HTTP_PROXY=$(HTTP_PROXY) \
-                         --build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
-                         --build-arg NO_PROXY=localhost,127.0.0.1,hydra,consent
-    export HTTP_PROXY
-    export HTTPS_PROXY
-    export NO_PROXY := localhost,127.0.0.1,hydra,consent
+                         --build-arg HTTPS_PROXY=$(HTTP_PROXY) \
+                         --build-arg NO_PROXY=$(NO_PROXY)
 else
     DOCKER_BUILD_ARGS :=
-    unexport HTTP_PROXY
-    unexport HTTPS_PROXY
-    unexport http_proxy
-    unexport https_proxy
 endif
 
 # Default target
@@ -127,38 +119,18 @@ test-compile:
 
 .PHONY: pull
 pull:
-	@if [ "$(USE_DOCKER_PROXY)" = "1" ]; then \
-		echo "Pulling images with proxy enabled..."; \
-		docker pull oryd/hydra:v2.2.0; \
-		docker pull oryd/hydra-login-consent-node:v2.2.0; \
-	else \
-		echo "Pulling images without proxy (USE_DOCKER_PROXY=0)..."; \
-		env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
-		docker pull oryd/hydra:v2.2.0; \
-		env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
-		docker pull oryd/hydra-login-consent-node:v2.2.0; \
-	fi
+	@echo "Pulling Docker images (proxy honored if set)..."
+	docker pull oryd/hydra:v2.2.0
+	docker pull oryd/hydra-login-consent-node:v2.2.0
 
 .PHONY: start-hydra
 start-hydra:
-	@if [ "$(USE_DOCKER_PROXY)" = "0" ]; then \
-		if [ -f .env.local ]; then \
-			echo "Loading environment from .env.local before starting Hydra..."; \
-			export $$(cat .env.local | grep -v '^#' | xargs) && \
-			env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
-			docker-compose -f tests/docker-compose.yml up -d; \
-		else \
-			env -u HTTP_PROXY -u HTTPS_PROXY -u http_proxy -u https_proxy \
-			docker-compose -f tests/docker-compose.yml up -d; \
-		fi; \
+	@if [ -f .env.local ]; then \
+		echo "Loading environment from .env.local before starting Hydra..."; \
+		export $$(cat .env.local | grep -v '^#' | xargs) && \
+		docker-compose -f tests/docker-compose.yml up -d; \
 	else \
-		if [ -f .env.local ]; then \
-			echo "Loading environment from .env.local before starting Hydra..."; \
-			export $$(cat .env.local | grep -v '^#' | xargs) && \
-			docker-compose -f tests/docker-compose.yml up -d; \
-		else \
-			docker-compose -f tests/docker-compose.yml up -d; \
-		fi; \
+		docker-compose -f tests/docker-compose.yml up -d; \
 	fi
 
 .PHONY: stop-hydra
@@ -226,19 +198,24 @@ docker-proxy-status:
 .PHONY: build-test
 build-test:
 	@echo "Preparing Docker build context..."
-	@# VPN detection: If artifactory_settings.xml exists, use it (VPN ON)
-	@if [ -f artifactory_settings.xml ]; then \
-		echo "VPN ON: Using artifactory_settings.xml for Docker build"; \
-		cp artifactory_settings.xml .docker-maven-settings.xml; \
-	else \
-		echo "VPN OFF: Using Maven Central for Docker build"; \
-		echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"></settings>' > .docker-maven-settings.xml; \
+	@# Proxy detection: If HTTP_PROXY is set, artifactory_settings.xml MUST exist
+ifdef HTTP_PROXY
+	@if [ ! -f artifactory_settings.xml ]; then \
+		echo "ERROR: HTTP_PROXY is set but artifactory_settings.xml not found!"; \
+		echo "When using a proxy, you must have artifactory_settings.xml configured for your corporate network."; \
+		exit 1; \
 	fi
+	@echo "Proxy detected: Using artifactory_settings.xml for Docker build"
+	@cp artifactory_settings.xml .docker-maven-settings.xml
+else
+	@echo "No proxy: Using Maven Central for Docker build"
+	@echo '<?xml version="1.0" encoding="UTF-8"?><settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"></settings>' > .docker-maven-settings.xml
+endif
 	@echo "Building test Docker container..."
 	docker compose -f tests/docker-compose.yml build \
 		--build-arg HTTP_PROXY=$(HTTP_PROXY) \
 		--build-arg HTTPS_PROXY=$(HTTPS_PROXY) \
-		--build-arg NO_PROXY=$(no_proxy) \
+		--build-arg NO_PROXY=$(NO_PROXY) \
 		test
 	@rm -f .docker-maven-settings.xml
 

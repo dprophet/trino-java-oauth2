@@ -24,13 +24,21 @@ COPY pom.xml /app/
 # VPN OFF: Contains empty/minimal settings or doesn't exist
 COPY .docker-maven-settings.xml /app/.docker-maven-settings.xml
 
-# Configure Maven settings based on what's in the prepared settings file
+# Configure Maven settings based on proxy environment
+# If HTTP_PROXY is set, .docker-maven-settings.xml MUST exist (corporate network)
+# Otherwise, use Maven Central directly
 RUN mkdir -p /root/.m2 && \
-    if [ -s /app/.docker-maven-settings.xml ]; then \
-        echo "=== VPN ON: Configuring Maven to use local Artifactory/JFrog/Nexus ==="; \
-        cp /app/.docker-maven-settings.xml /root/.m2/settings.xml; \
+    if [ -n "$HTTP_PROXY" ]; then \
+        if [ ! -s /app/.docker-maven-settings.xml ]; then \
+            echo "ERROR: HTTP_PROXY is set but .docker-maven-settings.xml is missing or empty!"; \
+            echo "When using a proxy, you must provide artifactory_settings.xml for your corporate network."; \
+            exit 1; \
+        fi; \
+        echo "=== Proxy detected: Configuring Maven to use Artifactory/JFrog/Nexus ==="; \
+        cp /app/.docker-maven-settings.xml /app/settings.xml; \
     else \
-        echo "=== VPN OFF: Using Maven Central directly ==="; \
+        echo "=== No proxy: Using Maven Central directly ==="; \
+        rm -f /app/settings.xml; \
     fi
 
 # Copy source code
@@ -44,11 +52,21 @@ COPY configure-hydra.sh /app/
 
 # Compile the project and download all dependencies
 # This will download everything needed including test dependencies
-RUN mvn clean compile test-compile -B
+RUN if [ -f /app/settings.xml ]; then \
+        echo "Using settings.xml for Maven"; \
+        mvn -s /app/settings.xml clean compile test-compile -B; \
+    else \
+        echo "Using Maven Central (no settings file)"; \
+        mvn clean compile test-compile -B; \
+    fi
 
 # Download test plugin dependencies explicitly (surefire-junit-platform, etc.)
 # This ensures everything is available when tests run
-RUN mvn test -DskipTests -B || true
+RUN if [ -f /app/settings.xml ]; then \
+        mvn -s /app/settings.xml test -DskipTests -B || true; \
+    else \
+        mvn test -DskipTests -B || true; \
+    fi
 
 # Generate a classpath file for runtime use by finding all jars in Maven repo
 # This is critical for configure-hydra.sh to work properly
@@ -60,4 +78,5 @@ RUN echo "Generating classpath for ConfigureHydra..." && \
     ls -lh /app/classpath.txt
 
 # Default command runs tests
-CMD ["mvn", "test"]
+# Use shell form to support conditional settings file
+CMD if [ -f /app/settings.xml ]; then mvn -s /app/settings.xml test; else mvn test; fi
