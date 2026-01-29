@@ -21,7 +21,7 @@ jobs:
         docker compose version
 
     # 3. Run your Make target
-    # This will execute 'docker-compose up', run tests, and 'down' 
-    # (assuming that is what your Makefile does)
+    # This will run "make test-docker-rebuild"
+    # (build the containers, mvn compile and execute the tests)
     - name: Run Container Tests
       run: make test-docker-rebuild
